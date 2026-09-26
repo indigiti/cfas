@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/faces/*.jpg
+data/*.csv
+data/users.json
