@@ -132,6 +132,20 @@ jobs:
           import gunicorn
           print('Bundled runtime imports successfully')
           PY
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          expected = Path('release/private').resolve()
+          for filename in ('digiops-runtime-activate.py', 'install-face-engine.py'):
+              path = Path('release/private/scripts') / filename
+              spec = importlib.util.spec_from_file_location(filename.replace('-', '_'), path)
+              module = importlib.util.module_from_spec(spec)
+              assert spec.loader is not None
+              spec.loader.exec_module(module)
+              assert module.ROOT == expected, (filename, module.ROOT, expected)
+          print('Private runtime root resolves to release/private')
+          PY
           ls release/private/bootstrap/pip-*.whl >/dev/null
           if grep -Fq '"-m", "venv"' release/private/scripts/digiops-runtime-activate.py; then
             echo 'Runtime activation must not depend on python3-venv.' >&2
