@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import signal
@@ -13,12 +12,12 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VENV = ROOT / ".venv"
 RUN = ROOT / "run"
 LOGS = ROOT / "logs"
 HOME = ROOT / ".runtime-home"
-CORE_REQ = ROOT / "requirements-runtime.txt"
-FACE_REQ = ROOT / "requirements-face.txt"
+PACKAGES = ROOT / "packages"
+RUNTIME_PACKAGES = PACKAGES / "runtime"
+FACE_PACKAGES = PACKAGES / "face"
 PORT = 8765
 
 
@@ -26,12 +25,30 @@ def emit(payload: dict) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def run(cmd: list[str], timeout: int = 90, env: dict[str, str] | None = None) -> None:
     subprocess.run(cmd, cwd=ROOT, env=env, check=True, timeout=timeout)
+
+
+def pythonpath(env: dict[str, str]) -> str:
+    parts = [str(FACE_PACKAGES), str(RUNTIME_PACKAGES)]
+    existing = env.get("PYTHONPATH", "").strip()
+    if existing:
+        parts.append(existing)
+    return os.pathsep.join(parts)
+
+
+def validate_bundled_runtime(env: dict[str, str]) -> None:
+    if not RUNTIME_PACKAGES.is_dir():
+        raise RuntimeError("Bundled Python runtime packages are missing from the release")
+    run(
+        [
+            sys.executable,
+            "-c",
+            "import flask, PIL, gunicorn; print('CFAS bundled runtime ready')",
+        ],
+        timeout=20,
+        env=env,
+    )
 
 
 def stop_previous() -> None:
@@ -83,30 +100,24 @@ def main() -> int:
     parser.add_argument("--expected-commit", required=True)
     args = parser.parse_args()
 
-    for directory in (RUN, LOGS, HOME, RUN / "tmp"):
+    for directory in (RUN, LOGS, HOME, RUN / "tmp", FACE_PACKAGES):
         directory.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     env["HOME"] = str(HOME)
     env["TMPDIR"] = str(RUN / "tmp")
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONPATH"] = pythonpath(env)
 
-    python = VENV / "bin" / "python"
-    if not python.exists():
-        run([sys.executable, "-m", "venv", str(VENV)], timeout=45, env=env)
-
-    core_stamp = RUN / "runtime-requirements.sha256"
-    required = sha256(CORE_REQ)
-    current = core_stamp.read_text().strip() if core_stamp.exists() else ""
-    if current != required:
-        run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(CORE_REQ)], timeout=85, env=env)
-        core_stamp.write_text(required)
+    # Cloudways does not guarantee python3-venv/ensurepip. Core dependencies are
+    # therefore vendored into the release artifact by GitHub Actions.
+    validate_bundled_runtime(env)
 
     stop_previous()
-    gunicorn = VENV / "bin" / "gunicorn"
     run(
         [
-            str(gunicorn),
+            sys.executable,
+            "-m", "gunicorn",
             "--daemon",
             "--bind", f"127.0.0.1:{PORT}",
             "--workers", "1",
@@ -123,12 +134,12 @@ def main() -> int:
 
     config = wait_ready()
 
-    # DeepFace is intentionally installed outside the DigiOps activation timeout.
-    # The UI reports FACE ENGINE UNAVAILABLE until this background task completes.
+    # DeepFace is large, so install it asynchronously into packages/face. The
+    # installer uses the pip wheel bundled in the artifact and never calls venv.
     face_installer = Path(__file__).with_name("install-face-engine.py")
     face_log = (LOGS / "face-engine-install.log").open("ab", buffering=0)
     subprocess.Popen(
-        [str(python), str(face_installer)],
+        [sys.executable, str(face_installer)],
         cwd=ROOT,
         env=env,
         stdin=subprocess.DEVNULL,
@@ -143,6 +154,7 @@ def main() -> int:
         "ok": True,
         "running_commit": args.expected_commit.strip(),
         "backend": f"127.0.0.1:{PORT}",
+        "runtime": "bundled-packages",
         "face_engine_ready": bool(config.get("face_engine_ready")),
     })
     return 0
