@@ -105,6 +105,7 @@ jobs:
             echo 'ENTRYPOINT_MISSING: DigiOps requires public/index.html or public/index.php' >&2
             exit 1
           fi
+          test -f release/public/.htaccess
           test -f release/private/scripts/digiops-runtime-activate.py
           test -f release/private/app.py
           test -f release/private/requirements-runtime.txt
@@ -119,4 +120,5 @@ jobs:
           name: digiops-release
           path: release/
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
