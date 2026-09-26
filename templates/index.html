@@ -5,131 +5,266 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0b1020" />
   <title>Campus Face Attendance</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <link rel="stylesheet" href="static/styles.css" />
+  <link rel="stylesheet" href="static/admin.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
 </head>
 <body>
-  <main class="shell" x-data="attendanceApp()" x-init="init()">
+  <main class="shell" x-data="attendanceApp()" x-init="init()" x-cloak>
     <header class="topbar">
       <div>
         <p class="eyebrow">Campus Attendance</p>
         <h1>Face verification</h1>
       </div>
       <div class="badges">
-        <span class="badge warning" x-show="config.test_mode">TEST MODE</span>
-        <span class="badge" :class="config.geolocation_enabled ? 'good' : 'muted'"
-              x-text="config.geolocation_enabled ? 'GEO ON' : 'GEO BYPASSED'"></span>
+        <span class="badge warning" x-show="setupRequired">SETUP REQUIRED</span>
+        <span class="badge warning" x-show="!setupRequired && config.test_mode">TEST MODE</span>
+        <span class="badge" :class="config.face_engine_ready ? 'good' : 'warning'"
+              x-text="config.face_engine_ready ? 'FACE ENGINE READY' : 'FACE ENGINE UNAVAILABLE'"></span>
       </div>
     </header>
 
-    <section class="notice" x-show="config.test_mode">
-      <strong>Testing only.</strong> Geolocation can be bypassed, but face capture and Python verification stay active. Test records are labelled TEST.
+    <section class="notice" x-show="setupRequired">
+      <strong>First-run browser setup.</strong> Create the administrator password and choose attendance settings below. No terminal configuration is required.
     </section>
 
-    <nav class="tabs" aria-label="Attendance actions">
-      <button :class="tab === 'verify' && 'active'" @click="tab='verify'">Verify & mark</button>
-      <button :class="tab === 'register' && 'active'" @click="tab='register'">Register face</button>
-      <button :class="tab === 'history' && 'active'" @click="tab='history'; loadHistory()">History</button>
-    </nav>
+    <section class="notice" x-show="!setupRequired && config.test_mode">
+      <strong>Testing mode is active.</strong> Attendance records are labelled TEST. Change this from the Admin tab when you are ready for production.
+    </section>
 
-    <section class="card" x-show="tab === 'register'" x-transition.opacity>
+    <section class="card" x-show="setupRequired" x-transition.opacity>
       <div class="section-heading">
         <div>
-          <p class="step">01 / Enrollment</p>
-          <h2>Register a dummy person</h2>
+          <p class="step">First run</p>
+          <h2>Configure this application</h2>
         </div>
         <span class="status-dot"></span>
       </div>
 
       <div class="grid-two">
         <label>
-          <span>User ID</span>
-          <input x-model.trim="register.user_id" placeholder="TEST001" autocomplete="off" />
+          <span>Administrator password</span>
+          <input type="password" x-model="setup.admin_password" autocomplete="new-password" placeholder="At least 10 characters" />
         </label>
         <label>
-          <span>Name</span>
-          <input x-model.trim="register.name" placeholder="Dummy User" autocomplete="name" />
+          <span>Confirm administrator password</span>
+          <input type="password" x-model="setup.admin_password_confirm" autocomplete="new-password" placeholder="Repeat password" />
         </label>
       </div>
 
-      <div class="camera-panel">
-        <video x-ref="registerVideo" autoplay playsinline muted></video>
-        <canvas x-ref="registerCanvas" hidden></canvas>
-        <div class="camera-overlay"><span>Keep one face inside frame</span></div>
+      <div class="settings-block">
+        <label class="toggle-row">
+          <span><strong>Test mode</strong><small>Labels attendance as TEST while you validate the deployment.</small></span>
+          <input type="checkbox" x-model="setup.test_mode" />
+        </label>
+        <label class="toggle-row">
+          <span><strong>Require geolocation</strong><small>Checks GPS position against the configured office coordinates.</small></span>
+          <input type="checkbox" x-model="setup.enable_geolocation" />
+        </label>
+        <label class="toggle-row">
+          <span><strong>Anti-spoofing</strong><small>Requests DeepFace liveness checks during enrollment and verification.</small></span>
+          <input type="checkbox" x-model="setup.enable_anti_spoofing" />
+        </label>
+      </div>
+
+      <div class="grid-two" x-show="setup.enable_geolocation">
+        <label><span>Office latitude</span><input type="number" step="any" x-model.number="setup.office_lat" /></label>
+        <label><span>Office longitude</span><input type="number" step="any" x-model.number="setup.office_lng" /></label>
+        <label><span>Geofence radius (metres)</span><input type="number" min="10" max="10000" x-model.number="setup.geofence_radius_m" /></label>
+        <label><span>Maximum GPS error (metres)</span><input type="number" min="5" max="1000" x-model.number="setup.max_gps_accuracy_m" /></label>
       </div>
 
       <div class="actions">
-        <button class="secondary" @click="startCamera('register')">Start camera</button>
-        <button class="primary" @click="registerFace()" :disabled="busy">
-          <span x-text="busy ? 'Processing…' : 'Capture & register'"></span>
+        <button class="primary" @click="completeSetup()" :disabled="busy">
+          <span x-text="busy ? 'Saving…' : 'Complete browser setup'"></span>
         </button>
       </div>
     </section>
 
-    <section class="card" x-show="tab === 'verify'" x-transition.opacity>
-      <div class="section-heading">
-        <div>
-          <p class="step">02 / Attendance</p>
-          <h2>Verify presence</h2>
-        </div>
-        <div class="mini-state">
-          <span class="pulse"></span>
-          <span x-text="cameraActive.verify ? 'Camera ready' : 'Camera off'"></span>
-        </div>
-      </div>
+    <template x-if="!setupRequired">
+      <div>
+        <nav class="tabs" aria-label="Attendance actions">
+          <button :class="tab === 'verify' && 'active'" @click="tab='verify'">Verify & mark</button>
+          <button x-show="adminAuthenticated" :class="tab === 'register' && 'active'" @click="tab='register'">Register face</button>
+          <button x-show="adminAuthenticated" :class="tab === 'history' && 'active'" @click="tab='history'; loadHistory()">History</button>
+          <button :class="tab === 'admin' && 'active'" @click="tab='admin'">Admin</button>
+        </nav>
 
-      <label>
-        <span>User ID</span>
-        <input x-model.trim="verify.user_id" placeholder="TEST001" autocomplete="off" />
-      </label>
+        <section class="card" x-show="tab === 'verify'" x-transition.opacity>
+          <div class="section-heading">
+            <div>
+              <p class="step">Attendance</p>
+              <h2>Verify presence</h2>
+            </div>
+            <div class="mini-state">
+              <span class="pulse"></span>
+              <span x-text="cameraActive.verify ? 'Camera ready' : 'Camera off'"></span>
+            </div>
+          </div>
 
-      <div class="camera-panel large">
-        <video x-ref="verifyVideo" autoplay playsinline muted></video>
-        <canvas x-ref="verifyCanvas" hidden></canvas>
-        <div class="camera-overlay"><span>Look directly at the camera</span></div>
-      </div>
+          <label>
+            <span>User ID</span>
+            <input x-model.trim="verify.user_id" placeholder="Enter your ID" autocomplete="off" />
+          </label>
 
-      <div class="checks">
-        <div><span>Face engine</span><strong>Python / DeepFace</strong></div>
-        <div><span>Geolocation</span><strong x-text="config.geolocation_enabled ? 'Required' : 'Bypassed for test'"></strong></div>
-        <div><span>Anti-spoofing</span><strong x-text="config.anti_spoofing_enabled ? 'Enabled' : 'Off in test'"></strong></div>
-      </div>
+          <div class="camera-panel large">
+            <video x-ref="verifyVideo" autoplay playsinline muted></video>
+            <canvas x-ref="verifyCanvas" hidden></canvas>
+            <div class="camera-overlay"><span>Look directly at the camera</span></div>
+          </div>
 
-      <div class="actions">
-        <button class="secondary" @click="startCamera('verify')">Start camera</button>
-        <button class="primary" @click="verifyFace()" :disabled="busy">
-          <span x-text="busy ? 'Verifying…' : 'Capture, verify & mark present'"></span>
-        </button>
-      </div>
-    </section>
+          <div class="checks">
+            <div><span>Face engine</span><strong x-text="config.face_engine_ready ? 'Ready' : 'Unavailable'"></strong></div>
+            <div><span>Geolocation</span><strong x-text="config.geolocation_enabled ? 'Required' : 'Not required'"></strong></div>
+            <div><span>Anti-spoofing</span><strong x-text="config.anti_spoofing_enabled ? 'Enabled' : 'Disabled'"></strong></div>
+          </div>
 
-    <section class="card" x-show="tab === 'history'" x-transition.opacity>
-      <div class="section-heading">
-        <div>
-          <p class="step">03 / Records</p>
-          <h2>Recent attendance</h2>
-        </div>
-        <button class="ghost" @click="loadHistory()">Refresh</button>
+          <div class="actions">
+            <button class="secondary" @click="startCamera('verify')">Start camera</button>
+            <button class="primary" @click="verifyFace()" :disabled="busy || !config.face_engine_ready">
+              <span x-text="busy ? 'Verifying…' : 'Capture, verify & mark present'"></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="card" x-show="tab === 'register' && adminAuthenticated" x-transition.opacity>
+          <div class="section-heading">
+            <div>
+              <p class="step">Administrator / Enrollment</p>
+              <h2>Register a person</h2>
+            </div>
+            <span class="status-dot"></span>
+          </div>
+
+          <div class="grid-two">
+            <label>
+              <span>User ID</span>
+              <input x-model.trim="register.user_id" placeholder="EMP001" autocomplete="off" />
+            </label>
+            <label>
+              <span>Name</span>
+              <input x-model.trim="register.name" placeholder="Person name" autocomplete="name" />
+            </label>
+          </div>
+
+          <div class="camera-panel">
+            <video x-ref="registerVideo" autoplay playsinline muted></video>
+            <canvas x-ref="registerCanvas" hidden></canvas>
+            <div class="camera-overlay"><span>Keep one face inside frame</span></div>
+          </div>
+
+          <div class="actions">
+            <button class="secondary" @click="startCamera('register')">Start camera</button>
+            <button class="primary" @click="registerFace()" :disabled="busy || !config.face_engine_ready">
+              <span x-text="busy ? 'Processing…' : 'Capture & register'"></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="card" x-show="tab === 'history' && adminAuthenticated" x-transition.opacity>
+          <div class="section-heading">
+            <div>
+              <p class="step">Administrator / Records</p>
+              <h2>Recent attendance</h2>
+            </div>
+            <button class="ghost" @click="loadHistory()">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Person</th><th>Date / time</th><th>Status</th><th>Mode</th><th>Location</th></tr></thead>
+              <tbody>
+                <template x-for="row in history" :key="row.timestamp + row.user_id">
+                  <tr>
+                    <td><strong x-text="row.name"></strong><small x-text="row.user_id"></small></td>
+                    <td x-text="prettyDate(row.timestamp)"></td>
+                    <td><span class="pill success" x-text="row.status"></span></td>
+                    <td><span class="pill" :class="row.mode === 'TEST' ? 'test' : 'success'" x-text="row.mode"></span></td>
+                    <td x-text="row.location_status"></td>
+                  </tr>
+                </template>
+                <tr x-show="history.length === 0"><td colspan="5" class="empty">No attendance records yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card" x-show="tab === 'admin'" x-transition.opacity>
+          <template x-if="!adminAuthenticated">
+            <div>
+              <div class="section-heading">
+                <div>
+                  <p class="step">Administrator</p>
+                  <h2>Sign in</h2>
+                </div>
+              </div>
+              <label>
+                <span>Administrator password</span>
+                <input type="password" x-model="admin.password" @keydown.enter="loginAdmin()" autocomplete="current-password" />
+              </label>
+              <div class="actions">
+                <button class="primary" @click="loginAdmin()" :disabled="busy">Sign in</button>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="adminAuthenticated">
+            <div>
+              <div class="section-heading">
+                <div>
+                  <p class="step">Administrator</p>
+                  <h2>Application settings</h2>
+                </div>
+                <button class="ghost" @click="logoutAdmin()">Sign out</button>
+              </div>
+
+              <div class="settings-block">
+                <label class="toggle-row">
+                  <span><strong>Test mode</strong><small>Labels newly recorded attendance as TEST.</small></span>
+                  <input type="checkbox" x-model="settings.test_mode" />
+                </label>
+                <label class="toggle-row">
+                  <span><strong>Require geolocation</strong><small>Rejects attendance outside the configured geofence.</small></span>
+                  <input type="checkbox" x-model="settings.enable_geolocation" />
+                </label>
+                <label class="toggle-row">
+                  <span><strong>Anti-spoofing</strong><small>Uses DeepFace liveness detection where supported.</small></span>
+                  <input type="checkbox" x-model="settings.enable_anti_spoofing" />
+                </label>
+              </div>
+
+              <div class="grid-two" x-show="settings.enable_geolocation">
+                <label><span>Office latitude</span><input type="number" step="any" x-model.number="settings.office_lat" /></label>
+                <label><span>Office longitude</span><input type="number" step="any" x-model.number="settings.office_lng" /></label>
+                <label><span>Geofence radius (metres)</span><input type="number" min="10" max="10000" x-model.number="settings.geofence_radius_m" /></label>
+                <label><span>Maximum GPS error (metres)</span><input type="number" min="5" max="1000" x-model.number="settings.max_gps_accuracy_m" /></label>
+              </div>
+
+              <div class="actions admin-actions">
+                <button class="primary" @click="saveSettings()" :disabled="busy">Save settings</button>
+              </div>
+
+              <hr class="divider" />
+
+              <div class="section-heading compact">
+                <div>
+                  <p class="step">Security</p>
+                  <h2>Change administrator password</h2>
+                </div>
+              </div>
+              <div class="grid-two">
+                <label><span>Current password</span><input type="password" x-model="admin.current_password" autocomplete="current-password" /></label>
+                <label><span>New password</span><input type="password" x-model="admin.new_password" autocomplete="new-password" /></label>
+              </div>
+              <label><span>Confirm new password</span><input type="password" x-model="admin.new_password_confirm" autocomplete="new-password" /></label>
+              <div class="actions">
+                <button class="secondary" @click="changePassword()" :disabled="busy">Update password</button>
+              </div>
+            </div>
+          </template>
+        </section>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Person</th><th>Date / time</th><th>Status</th><th>Mode</th><th>Location</th></tr></thead>
-          <tbody>
-            <template x-for="row in history" :key="row.timestamp + row.user_id">
-              <tr>
-                <td><strong x-text="row.name"></strong><small x-text="row.user_id"></small></td>
-                <td x-text="prettyDate(row.timestamp)"></td>
-                <td><span class="pill success" x-text="row.status"></span></td>
-                <td><span class="pill" :class="row.mode === 'TEST' ? 'test' : 'success'" x-text="row.mode"></span></td>
-                <td x-text="row.location_status"></td>
-              </tr>
-            </template>
-            <tr x-show="history.length === 0"><td colspan="5" class="empty">No attendance records yet.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    </template>
 
     <div class="result" x-show="message.text" x-transition :class="message.type" x-ref="resultBox">
       <div class="result-icon" x-text="message.type === 'success' ? '✓' : message.type === 'error' ? '!' : 'i'"></div>
@@ -142,10 +277,10 @@
     </div>
 
     <footer>
-      No database · enrollment images stay on this server · live verification images are temporary.
+      Browser-managed configuration · biometric data stored in private runtime storage · live verification images are temporary.
     </footer>
   </main>
 
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="static/app.js"></script>
 </body>
 </html>
