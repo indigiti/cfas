@@ -3,8 +3,9 @@ declare(strict_types=1);
 
 // CFAS runs under Apache/PHP on Cloudways. Dynamic requests are handed to the
 // private Flask WSGI application through a short-lived Python CGI process.
-// This avoids requiring a persistent Gunicorn/systemd/supervisor process.
-set_time_limit(150);
+// Face-engine installation is browser-triggered and may take several minutes.
+set_time_limit(1800);
+@ini_set('max_execution_time', '1800');
 
 $mount = '/cfas';
 $requestUri = (string)($_SERVER['REQUEST_URI'] ?? '/');
@@ -22,6 +23,7 @@ if ($forwardPath === '') $forwardPath = '/';
 
 $appHome = dirname(dirname(__DIR__));
 $privateRoot = $appHome . '/private_html/cfas';
+$persistentRoot = dirname($privateRoot) . '/.' . basename($privateRoot) . '-runtime';
 $gateway = $privateRoot . '/scripts/cgi-gateway.py';
 $python = '/usr/bin/python3';
 
@@ -66,8 +68,9 @@ $env['SERVER_SOFTWARE'] = 'CFAS-PHP-Bridge';
 $env['GATEWAY_INTERFACE'] = 'CGI/1.1';
 $env['REMOTE_ADDR'] = (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
 $env['HTTPS'] = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'on' : 'off';
-$env['HOME'] = $privateRoot . '/.runtime-home';
-$env['TMPDIR'] = $privateRoot . '/run/tmp';
+$env['CFAS_RUNTIME_ROOT'] = $persistentRoot;
+$env['HOME'] = $persistentRoot . '/.runtime-home';
+$env['TMPDIR'] = $persistentRoot . '/run/tmp';
 $env['PYTHONUNBUFFERED'] = '1';
 
 foreach (function_exists('getallheaders') ? getallheaders() : [] as $name => $value) {
@@ -151,4 +154,7 @@ foreach (preg_split('/\r\n|\r|\n/', trim($rawHeaders)) ?: [] as $line) {
 }
 
 http_response_code($status);
+if (stripos($responseBody, '</body>') !== false && !str_contains($responseBody, 'static/face-setup.js')) {
+    $responseBody = str_ireplace('</body>', '<script src="static/face-setup.js"></script></body>', $responseBody);
+}
 echo $responseBody;
