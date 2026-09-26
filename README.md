@@ -14,6 +14,20 @@ For the DigiOps/Cloudways layout used by `indigiti/cfas`:
 
 When the code is not under a `public_html` directory, runtime files fall back to the local `data/` directory for development.
 
+## Automated DigiOps release
+
+Every push to `main` runs `.github/workflows/digiops-release.yml` and publishes a GitHub Actions artifact named exactly `digiops-release`, matching the DigiOps application setting.
+
+The workflow:
+
+- validates Python syntax and boots the Flask application with a test client;
+- checks that frontend URLs remain relative so `/cfas/` subdirectory deployment is not broken;
+- builds a release-only payload with application source, templates, static assets, requirements and WSGI entry points;
+- verifies that runtime data, `.env` files and biometric files are not included;
+- uploads the payload as the `digiops-release` artifact.
+
+The artifact is intended to be extracted into `public_html/cfas/`. Runtime data is created automatically under `private_html/cfas/data/` and therefore survives replacement of the public release payload.
+
 ## Browser setup
 
 On first visit the application shows a setup form. The administrator can configure:
@@ -51,11 +65,13 @@ private_html/cfas/data/
     └── <user_id>.jpg
 ```
 
-## Server requirements
+## Server runtime requirements
 
-The release environment still needs to install the packages in `requirements.txt`; that is a deployment/build responsibility rather than an operator setup step. DeepFace may download model weights the first time a model is used, so the deployment must have sufficient memory, disk space and outbound access for that initialization.
+The release contains `requirements.txt`; dependency installation belongs to the application runtime/deployment platform, not to the browser operator. No SSH or terminal configuration is required by the CFAS application itself.
 
-WSGI entry points are included as `wsgi.py` and `passenger_wsgi.py` so deployment tooling can import `application` without changing application code.
+DeepFace may download model weights when a face model is first initialized. The runtime therefore needs sufficient memory/disk and outbound access for initial model provisioning. If the face engine is unavailable, the web UI reports that state instead of exposing a shell-install instruction.
+
+WSGI entry points are included as `wsgi.py` and `passenger_wsgi.py`, both exporting `application` for deployment tooling.
 
 ## Current architecture limits
 
