@@ -68,7 +68,14 @@ jobs:
         run: |
           set -eu
           rm -rf release
-          mkdir -p release/public/static release/private/templates release/private/static release/private/scripts
+          mkdir -p \
+            release/public/static \
+            release/private/templates \
+            release/private/static \
+            release/private/scripts \
+            release/private/packages/runtime \
+            release/private/packages/face \
+            release/private/bootstrap
 
           cp deploy/public/index.php release/public/index.php
           cp deploy/public/.htaccess release/public/.htaccess
@@ -81,6 +88,25 @@ jobs:
           cp deploy/private/scripts/digiops-runtime-activate.py release/private/scripts/
           cp deploy/private/scripts/install-face-engine.py release/private/scripts/
 
+          # Cloudways does not guarantee python3-venv/ensurepip. Vendor the small
+          # always-required runtime into the artifact instead of creating a venv
+          # on the target server.
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-compile \
+            --upgrade \
+            --target release/private/packages/runtime \
+            -r requirements-runtime.txt
+
+          # DeepFace is installed asynchronously on the target. Bundle pip itself
+          # as a wheel so that operation also does not depend on ensurepip.
+          python -m pip download \
+            --disable-pip-version-check \
+            --only-binary=:all: \
+            --no-deps \
+            --dest release/private/bootstrap \
+            'pip>=25,<26'
+
           cat > release/private/RELEASE.json <<EOF
           {
             "artifact": "digiops-release",
@@ -92,9 +118,25 @@ jobs:
             "private_path": "private_html/cfas/",
             "public_entrypoint": "index.php",
             "runtime_activation": "scripts/digiops-runtime-activate.py",
+            "python_runtime": "bundled-packages",
             "backend": "127.0.0.1:8765"
           }
           EOF
+
+      - name: Validate bundled runtime without host site-packages
+        run: |
+          set -eu
+          PYTHONPATH="$PWD/release/private/packages/runtime" python -S - <<'PY'
+          import flask
+          import PIL
+          import gunicorn
+          print('Bundled runtime imports successfully')
+          PY
+          ls release/private/bootstrap/pip-*.whl >/dev/null
+          if grep -Fq '"-m", "venv"' release/private/scripts/digiops-runtime-activate.py; then
+            echo 'Runtime activation must not depend on python3-venv.' >&2
+            exit 1
+          fi
 
       - name: Validate exact DigiOps artifact contract
         run: |
@@ -107,8 +149,10 @@ jobs:
           fi
           test -f release/public/.htaccess
           test -f release/private/scripts/digiops-runtime-activate.py
+          test -f release/private/scripts/install-face-engine.py
           test -f release/private/app.py
           test -f release/private/requirements-runtime.txt
+          test -d release/private/packages/runtime/flask
           test ! -e release/public/data
           test ! -e release/private/data
           test ! -e release/private/.env
