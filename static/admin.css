@@ -1,0 +1,26 @@
+/* Browser-only setup/admin controls */
+.tabs { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.settings-block { display: grid; gap: 8px; margin: 6px 0 18px; }
+.toggle-row {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 14px;
+  margin: 0;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 13px;
+  background: var(--panel-2);
+}
+.toggle-row > span { display: grid; gap: 3px; }
+.toggle-row strong { color: var(--text); font-size: 13px; }
+.toggle-row small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.toggle-row input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent2);
+  cursor: pointer;
+}
+input[type="number"] { appearance: textfield; }
+.divider { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.section-heading.compact { margin-bottom: 14px; }
+.admin-actions { margin-top: 4px; }
