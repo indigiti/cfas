@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <title>Campus Face Attendance</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+</head>
+<body>
+  <main class="shell" x-data="attendanceApp()" x-init="init()">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Campus Attendance</p>
+        <h1>Face verification</h1>
+      </div>
+      <div class="badges">
+        <span class="badge warning" x-show="config.test_mode">TEST MODE</span>
+        <span class="badge" :class="config.geolocation_enabled ? 'good' : 'muted'"
+              x-text="config.geolocation_enabled ? 'GEO ON' : 'GEO BYPASSED'"></span>
+      </div>
+    </header>
+
+    <section class="notice" x-show="config.test_mode">
+      <strong>Testing only.</strong> Geolocation can be bypassed, but face capture and Python verification stay active. Test records are labelled TEST.
+    </section>
+
+    <nav class="tabs" aria-label="Attendance actions">
+      <button :class="tab === 'verify' && 'active'" @click="tab='verify'">Verify & mark</button>
+      <button :class="tab === 'register' && 'active'" @click="tab='register'">Register face</button>
+      <button :class="tab === 'history' && 'active'" @click="tab='history'; loadHistory()">History</button>
+    </nav>
+
+    <section class="card" x-show="tab === 'register'" x-transition.opacity>
+      <div class="section-heading">
+        <div>
+          <p class="step">01 / Enrollment</p>
+          <h2>Register a dummy person</h2>
+        </div>
+        <span class="status-dot"></span>
+      </div>
+
+      <div class="grid-two">
+        <label>
+          <span>User ID</span>
+          <input x-model.trim="register.user_id" placeholder="TEST001" autocomplete="off" />
+        </label>
+        <label>
+          <span>Name</span>
+          <input x-model.trim="register.name" placeholder="Dummy User" autocomplete="name" />
+        </label>
+      </div>
+
+      <div class="camera-panel">
+        <video x-ref="registerVideo" autoplay playsinline muted></video>
+        <canvas x-ref="registerCanvas" hidden></canvas>
+        <div class="camera-overlay"><span>Keep one face inside frame</span></div>
+      </div>
+
+      <div class="actions">
+        <button class="secondary" @click="startCamera('register')">Start camera</button>
+        <button class="primary" @click="registerFace()" :disabled="busy">
+          <span x-text="busy ? 'Processing…' : 'Capture & register'"></span>
+        </button>
+      </div>
+    </section>
+
+    <section class="card" x-show="tab === 'verify'" x-transition.opacity>
+      <div class="section-heading">
+        <div>
+          <p class="step">02 / Attendance</p>
+          <h2>Verify presence</h2>
+        </div>
+        <div class="mini-state">
+          <span class="pulse"></span>
+          <span x-text="cameraActive.verify ? 'Camera ready' : 'Camera off'"></span>
+        </div>
+      </div>
+
+      <label>
+        <span>User ID</span>
+        <input x-model.trim="verify.user_id" placeholder="TEST001" autocomplete="off" />
+      </label>
+
+      <div class="camera-panel large">
+        <video x-ref="verifyVideo" autoplay playsinline muted></video>
+        <canvas x-ref="verifyCanvas" hidden></canvas>
+        <div class="camera-overlay"><span>Look directly at the camera</span></div>
+      </div>
+
+      <div class="checks">
+        <div><span>Face engine</span><strong>Python / DeepFace</strong></div>
+        <div><span>Geolocation</span><strong x-text="config.geolocation_enabled ? 'Required' : 'Bypassed for test'"></strong></div>
+        <div><span>Anti-spoofing</span><strong x-text="config.anti_spoofing_enabled ? 'Enabled' : 'Off in test'"></strong></div>
+      </div>
+
+      <div class="actions">
+        <button class="secondary" @click="startCamera('verify')">Start camera</button>
+        <button class="primary" @click="verifyFace()" :disabled="busy">
+          <span x-text="busy ? 'Verifying…' : 'Capture, verify & mark present'"></span>
+        </button>
+      </div>
+    </section>
+
+    <section class="card" x-show="tab === 'history'" x-transition.opacity>
+      <div class="section-heading">
+        <div>
+          <p class="step">03 / Records</p>
+          <h2>Recent attendance</h2>
+        </div>
+        <button class="ghost" @click="loadHistory()">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Person</th><th>Date / time</th><th>Status</th><th>Mode</th><th>Location</th></tr></thead>
+          <tbody>
+            <template x-for="row in history" :key="row.timestamp + row.user_id">
+              <tr>
+                <td><strong x-text="row.name"></strong><small x-text="row.user_id"></small></td>
+                <td x-text="prettyDate(row.timestamp)"></td>
+                <td><span class="pill success" x-text="row.status"></span></td>
+                <td><span class="pill" :class="row.mode === 'TEST' ? 'test' : 'success'" x-text="row.mode"></span></td>
+                <td x-text="row.location_status"></td>
+              </tr>
+            </template>
+            <tr x-show="history.length === 0"><td colspan="5" class="empty">No attendance records yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="result" x-show="message.text" x-transition :class="message.type" x-ref="resultBox">
+      <div class="result-icon" x-text="message.type === 'success' ? '✓' : message.type === 'error' ? '!' : 'i'"></div>
+      <div>
+        <strong x-text="message.title"></strong>
+        <p x-text="message.text"></p>
+        <p class="metrics" x-show="message.metrics" x-text="message.metrics"></p>
+      </div>
+      <button @click="message.text=''" aria-label="Dismiss">×</button>
+    </div>
+
+    <footer>
+      No database · enrollment images stay on this server · live verification images are temporary.
+    </footer>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
