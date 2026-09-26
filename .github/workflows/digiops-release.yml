@@ -127,17 +127,12 @@ jobs:
           assert (private / 'packages/runtime/deepface').is_dir()
           assert (private / '.runtime-home/.deepface/weights').is_dir()
 
-          for filename in ('cgi-gateway.py', 'digiops-runtime-activate.py'):
-              path = private / 'scripts' / filename
-              spec = importlib.util.spec_from_file_location(filename.replace('-', '_'), path)
-              module = importlib.util.module_from_spec(spec)
-              assert spec.loader is not None
-              if filename == 'cgi-gateway.py':
-                  # CGI gateway executes on import; root validation is covered by
-                  # activation smoke test below instead.
-                  continue
-              spec.loader.exec_module(module)
-              assert module.ROOT == private, (filename, module.ROOT, private)
+          path = private / 'scripts' / 'digiops-runtime-activate.py'
+          spec = importlib.util.spec_from_file_location('digiops_runtime_activate', path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+          assert module.ROOT == private, (module.ROOT, private)
           print('Bundled Flask/DeepFace runtime imports successfully')
           PY
 
@@ -171,6 +166,10 @@ jobs:
             echo 'Release still depends on a persistent Python daemon or venv.' >&2
             exit 1
           fi
+
+          # Importing the app intentionally initializes runtime files. They are
+          # test artifacts only and must never be shipped in the release.
+          rm -rf release/private/data
 
       - name: Validate exact DigiOps artifact contract
         run: |
