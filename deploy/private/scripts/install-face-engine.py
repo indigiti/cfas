@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / "run"
 REQ = ROOT / "requirements-face.txt"
 PACKAGES = ROOT / "packages"
