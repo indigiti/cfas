@@ -1,82 +1,62 @@
-# Campus Face Attendance — no database
+# Campus Face Attendance
 
-Small Flask + Alpine.js + GSAP attendance prototype for mobile browsers.
+Browser-operated face attendance application built with Flask, Alpine.js and DeepFace.
 
-## What it does
+## Deployment model
 
-- One-time person enrollment with User ID, name and camera capture.
-- Stores user metadata in `data/users.json` and the enrollment image in `data/faces/`.
-- Verifies a fresh camera capture against the registered face using DeepFace.
-- Marks one `PRESENT` record per person/day in `data/attendance.csv`.
-- Geolocation is **disabled by default for testing** and the record is labelled `BYPASSED_FOR_TESTING` / `TEST`.
-- Live verification images are written only to a temporary file and deleted immediately after comparison.
-- Optional DeepFace anti-spoofing can be enabled later.
+The deployed application is intended to be operated entirely from the web UI. There are no environment-variable or terminal steps required for application configuration after deployment.
 
-## Run
+For the DigiOps/Cloudways layout used by `indigiti/cfas`:
 
-Python 3.10+ is recommended.
+- Public application: `/cfas/` → `public_html/cfas/`
+- Private runtime data: `private_html/cfas/data/`
+- First-run setup: open the deployed URL in a browser and create the administrator password.
 
-```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-# source .venv/bin/activate
+When the code is not under a `public_html` directory, runtime files fall back to the local `data/` directory for development.
 
-pip install -r requirements.txt
-python app.py
-```
+## Browser setup
 
-Open `http://127.0.0.1:5000` on the same computer.
+On first visit the application shows a setup form. The administrator can configure:
 
-For a phone camera, use an HTTPS URL in normal deployment. Browsers generally restrict camera/geolocation to secure contexts; `localhost` is treated specially for local development.
+- administrator password
+- test/production record mode
+- geolocation requirement
+- office latitude and longitude
+- geofence radius
+- maximum accepted GPS error
+- DeepFace anti-spoofing
 
-## Dummy test flow
+After setup, the **Admin** tab provides the same settings, password change, face enrollment and attendance history. Normal attendance verification remains available without admin sign-in.
 
-1. Open **Register face**.
-2. Enter `TEST001` and a name.
-3. Start camera, center one face, then **Capture & register**.
-4. Go to **Verify & mark**.
-5. Enter `TEST001`, start camera, then **Capture, verify & mark present**.
-6. Open **History** to see the CSV-backed record.
+## Security and storage
 
-## Turn geolocation on later
+- Enrollment is administrator-only.
+- Attendance history and the user list are administrator-only APIs.
+- Admin authentication uses a server-side password hash and an HTTPS-only session cookie.
+- Browser write requests are restricted to the same origin.
+- Security headers deny framing and restrict camera/geolocation to the application origin.
+- Live verification images are temporary and deleted after comparison.
+- Under the DigiOps layout, biometric/runtime data is automatically stored outside `public_html`.
+- Attendance is de-duplicated to one PRESENT record per user/day within the running application process.
 
-Set environment variables before starting Flask:
-
-```bash
-TEST_MODE=false
-ENABLE_GEOLOCATION=true
-OFFICE_LAT=18.5204
-OFFICE_LNG=73.8567
-GEOFENCE_RADIUS_M=100
-MAX_GPS_ACCURACY_M=80
-python app.py
-```
-
-The server performs the actual radius and GPS-accuracy check; it does not trust a browser-side “inside campus” flag.
-
-## Optional anti-spoofing
-
-```bash
-ENABLE_ANTI_SPOOFING=true
-python app.py
-```
-
-This uses DeepFace's anti-spoofing path. Test it on your target devices before relying on it for production attendance.
-
-## Storage
+Runtime files include:
 
 ```text
-data/
+private_html/cfas/data/
+├── .secret_key
+├── settings.json
 ├── users.json
 ├── attendance.csv
 └── faces/
-    └── TEST001.jpg
+    └── <user_id>.jpg
 ```
 
-There is intentionally no SQL/NoSQL database.
+## Server requirements
 
-## Important production notes
+The release environment still needs to install the packages in `requirements.txt`; that is a deployment/build responsibility rather than an operator setup step. DeepFace may download model weights the first time a model is used, so the deployment must have sufficient memory, disk space and outbound access for that initialization.
 
-This is a prototype. Before real deployment, add authentication/admin authorization, CSRF protection, rate limiting, HTTPS, retention/deletion rules for biometric data, backups, audit logging, and an explicit consent/privacy notice. File storage is not suitable for multi-server deployments without additional coordination.
+WSGI entry points are included as `wsgi.py` and `passenger_wsgi.py` so deployment tooling can import `application` without changing application code.
+
+## Current architecture limits
+
+This remains a single-server, file-backed application. For high concurrency or multiple application servers, move users/attendance to a transactional database or shared service and move biometric files to controlled shared storage. Production deployments should also define retention/deletion policy, consent/privacy notices, backups and operational monitoring for biometric data.
