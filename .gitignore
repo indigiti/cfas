@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .env
-data/faces/*.jpg
+data/faces/
 data/*.csv
 data/users.json
+data/settings.json
+data/.secret_key
