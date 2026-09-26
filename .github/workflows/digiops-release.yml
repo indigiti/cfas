@@ -1,0 +1,100 @@
+name: DigiOps Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: digiops-release-main
+  cancel-in-progress: true
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install lightweight validation dependencies
+        run: python -m pip install --disable-pip-version-check 'Flask>=3.1,<4' 'Pillow>=10,<13'
+
+      - name: Validate Python syntax and Flask boot
+        run: |
+          python -m py_compile app.py wsgi.py passenger_wsgi.py
+          python - <<'PY'
+          import importlib
+          module = importlib.import_module('app')
+          client = module.app.test_client()
+
+          home = client.get('/')
+          assert home.status_code == 200, home.status_code
+          assert b'Campus Face Attendance' in home.data
+
+          config = client.get('/api/config')
+          assert config.status_code == 200, config.status_code
+          payload = config.get_json()
+          assert payload and payload.get('ok') is True
+          assert 'setup_required' in payload
+          PY
+
+      - name: Validate /cfas/ relative routing
+        run: |
+          if grep -RInE "(fetch|postJSON)\(['\"]/(api|static)/" static templates; then
+            echo 'Root-relative app URLs found. CFAS must remain deployable under /cfas/.' >&2
+            exit 1
+          fi
+          grep -q 'static/app.js' templates/index.html
+          grep -q 'static/styles.css' templates/index.html
+
+      - name: Build release payload
+        run: |
+          set -eu
+          rm -rf release
+          mkdir -p release/templates release/static
+          cp app.py wsgi.py passenger_wsgi.py requirements.txt release/
+          cp templates/index.html release/templates/
+          cp static/app.js static/styles.css static/admin.css release/static/
+          cat > release/RELEASE.json <<EOF
+          {
+            "artifact": "digiops-release",
+            "repository": "${GITHUB_REPOSITORY}",
+            "branch": "${GITHUB_REF_NAME}",
+            "commit": "${GITHUB_SHA}",
+            "application_url": "/cfas/",
+            "public_path": "public_html/cfas/",
+            "private_path": "private_html/cfas/",
+            "wsgi_entrypoint": "wsgi:application"
+          }
+          EOF
+
+      - name: Audit release contents
+        run: |
+          test ! -e release/data
+          test ! -e release/.env
+          test -f release/app.py
+          test -f release/wsgi.py
+          test -f release/passenger_wsgi.py
+          test -f release/requirements.txt
+          test -f release/templates/index.html
+          test -f release/static/app.js
+          find release -maxdepth 3 -type f -print | sort
+
+      - name: Upload DigiOps artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digiops-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
