@@ -28,11 +28,11 @@ jobs:
           cache: pip
 
       - name: Install lightweight validation dependencies
-        run: python -m pip install --disable-pip-version-check 'Flask>=3.1,<4' 'Pillow>=10,<13'
+        run: python -m pip install --disable-pip-version-check -r requirements-runtime.txt
 
       - name: Validate Python syntax and Flask boot
         run: |
-          python -m py_compile app.py wsgi.py passenger_wsgi.py
+          python -m py_compile app.py wsgi.py passenger_wsgi.py deploy/private/scripts/digiops-runtime-activate.py deploy/private/scripts/install-face-engine.py
           python - <<'PY'
           import importlib
           module = importlib.import_module('app')
@@ -49,6 +49,12 @@ jobs:
           assert 'setup_required' in payload
           PY
 
+      - name: Validate public PHP entrypoint
+        run: |
+          php -l deploy/public/index.php
+          test -f deploy/public/index.php
+          test -f deploy/public/.htaccess
+
       - name: Validate /cfas/ relative routing
         run: |
           if grep -RInE "(fetch|postJSON)\(['\"]/(api|static)/" static templates; then
@@ -58,15 +64,24 @@ jobs:
           grep -q 'static/app.js' templates/index.html
           grep -q 'static/styles.css' templates/index.html
 
-      - name: Build release payload
+      - name: Build DigiOps split release
         run: |
           set -eu
           rm -rf release
-          mkdir -p release/templates release/static
-          cp app.py wsgi.py passenger_wsgi.py requirements.txt release/
-          cp templates/index.html release/templates/
-          cp static/app.js static/styles.css static/admin.css release/static/
-          cat > release/RELEASE.json <<EOF
+          mkdir -p release/public/static release/private/templates release/private/static release/private/scripts
+
+          cp deploy/public/index.php release/public/index.php
+          cp deploy/public/.htaccess release/public/.htaccess
+          cp static/app.js static/styles.css static/admin.css release/public/static/
+
+          cp app.py wsgi.py passenger_wsgi.py release/private/
+          cp requirements.txt requirements-runtime.txt requirements-face.txt release/private/
+          cp templates/index.html release/private/templates/
+          cp static/app.js static/styles.css static/admin.css release/private/static/
+          cp deploy/private/scripts/digiops-runtime-activate.py release/private/scripts/
+          cp deploy/private/scripts/install-face-engine.py release/private/scripts/
+
+          cat > release/private/RELEASE.json <<EOF
           {
             "artifact": "digiops-release",
             "repository": "${GITHUB_REPOSITORY}",
@@ -75,21 +90,28 @@ jobs:
             "application_url": "/cfas/",
             "public_path": "public_html/cfas/",
             "private_path": "private_html/cfas/",
-            "wsgi_entrypoint": "wsgi:application"
+            "public_entrypoint": "index.php",
+            "runtime_activation": "scripts/digiops-runtime-activate.py",
+            "backend": "127.0.0.1:8765"
           }
           EOF
 
-      - name: Audit release contents
+      - name: Validate exact DigiOps artifact contract
         run: |
-          test ! -e release/data
-          test ! -e release/.env
-          test -f release/app.py
-          test -f release/wsgi.py
-          test -f release/passenger_wsgi.py
-          test -f release/requirements.txt
-          test -f release/templates/index.html
-          test -f release/static/app.js
-          find release -maxdepth 3 -type f -print | sort
+          set -eu
+          test -d release/public
+          test -d release/private
+          if [ ! -f release/public/index.html ] && [ ! -f release/public/index.php ]; then
+            echo 'ENTRYPOINT_MISSING: DigiOps requires public/index.html or public/index.php' >&2
+            exit 1
+          fi
+          test -f release/private/scripts/digiops-runtime-activate.py
+          test -f release/private/app.py
+          test -f release/private/requirements-runtime.txt
+          test ! -e release/public/data
+          test ! -e release/private/data
+          test ! -e release/private/.env
+          find release -maxdepth 4 -type f -print | sort
 
       - name: Upload DigiOps artifact
         uses: actions/upload-artifact@v4
